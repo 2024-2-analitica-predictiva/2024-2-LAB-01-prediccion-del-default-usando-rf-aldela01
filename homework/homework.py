@@ -49,25 +49,29 @@
 #
 
 # Carga de librerias
-from zipfile import ZipFile
-import pandas as pd
+import pandas as pd 
+from sklearn.model_selection import train_test_split, GridSearchCV 
+from sklearn.compose import ColumnTransformer 
+from sklearn.pipeline import Pipeline 
+from sklearn.preprocessing import OneHotEncoder, StandardScaler 
+from sklearn.ensemble import RandomForestClassifier 
+import pickle
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 
 # Carga de datos
 train_data_zip = 'files/input/train_data.csv.zip'
 test_data_zip = 'files/input/test_data.csv.zip'
 
 # Extraccion de los datos de los archivos zip
-with ZipFile(train_data_zip, 'r') as zip_ref:
-    with zip_ref.open('train_default_of_credit_card_clients.csv') as f:
-        train_data=pd.read_csv(f)
+train_data=pd.read_csv(
+    train_data_zip,
+    index_col=False,
+    compression='zip')
 
-with ZipFile(test_data_zip, 'r') as zip_ref:
-    with zip_ref.open('test_default_of_credit_card_clients.csv') as f:
-        test_data=pd.read_csv(f)
+test_data=pd.read_csv(
+    test_data_zip,
+    index_col=False,
+    compression='zip')
 
 # Renombrar la columna "default payment next month" a "default"
 train_data.rename(columns={'default payment next month': 'default'}, inplace=True)
@@ -95,20 +99,30 @@ train_data.loc[train_data['EDUCATION'] > 4, 'EDUCATION'] = 4
 test_data.loc[test_data['EDUCATION'] > 4, 'EDUCATION'] = 4
 
 # Reclasificar las variables PAY_i, EDUCATION, SEX y MARRIAGE a categoricas
-cat_columns = ['PAY_0', 'PAY_2', 'PAY_3', 'PAY_4', 'PAY_5', 'PAY_6', 'EDUCATION', 'SEX', 'MARRIAGE']
+# cat_columns = ['PAY_0', 'PAY_2', 'PAY_3', 'PAY_4', 'PAY_5', 'PAY_6', 'EDUCATION', 'SEX', 'MARRIAGE']
+cat_columns = ['EDUCATION', 'SEX', 'MARRIAGE']
 for col in cat_columns:
     train_data[col] = train_data[col].astype('category')
     test_data[col] = test_data[col].astype('category')
 
-# Guardar los datasets limpios
-train_data.to_csv('train_data_clean.csv', index=False)
+# # Balancear las muestras de entrenamiento con respecto a la variable objetivo
 
+# from imblearn.under_sampling import RandomUnderSampler
+
+# # Balancear las muestras de entrenamiento con respecto a la variable objetivo
+# rus = RandomUnderSampler(random_state=42)
+
+# x_train, y_train = rus.fit_resample(train_data.drop(columns='default'), train_data['default'])
 
 # Paso 2.
 # Divida los datasets en x_train, y_train, x_test, y_test.
 #
 x_train = train_data.drop(columns='default')
 y_train = train_data['default']
+# Separar las variables categoricas
+x_train_cat = x_train.select_dtypes(include='category')
+x_train_num = x_train.select_dtypes(exclude='category')
+
 x_test = test_data.drop(columns='default')
 y_test = test_data['default']
 #
@@ -120,11 +134,31 @@ y_test = test_data['default']
 # - Ajusta un modelo de bosques aleatorios (rando forest).
 #
 
-# Crear el pipeline
+cat_transformer = Pipeline(steps=[
+    ('encoder', OneHotEncoder(drop='first', handle_unknown='ignore'))
+])
+
+num_transformer = Pipeline(steps=[
+    ('scaler', StandardScaler())
+])
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', num_transformer, x_train_num.columns),
+        ('cat', cat_transformer, x_train_cat.columns)
+    ]
+)
+
 pipeline = Pipeline([
-    ('encoder', OneHotEncoder(drop='first')),
+    ('preprocessor', preprocessor),
     ('model', RandomForestClassifier())
 ])
+
+# # Crear el pipeline
+# pipeline = Pipeline([
+#     ('encoder', OneHotEncoder(drop='first')),
+#     ('model', RandomForestClassifier())
+# ])
 
 #
 # Paso 4.
@@ -132,10 +166,24 @@ pipeline = Pipeline([
 # Use 10 splits para la validación cruzada. Use la función de precision
 # balanceada para medir la precisión del modelo.
 #
+
+param_grid = {
+    'model__n_estimators': [50, 100, 200],
+    'model__max_depth': [5, 10, 20]
+}
+
+model= GridSearchCV(pipeline, param_grid, cv=10, scoring='balanced_accuracy')
+
+model.fit(x_train, y_train)
+
 #
 # Paso 5.
 # Guarde el modelo como "files/models/model.pkl".
 #
+
+with open('files/models/model.pkl', 'wb') as f:
+    pickle.dump(model, f)
+
 #
 # Paso 6.
 # Calcule las metricas de precision, precision balanceada, recall,
@@ -145,6 +193,37 @@ pipeline = Pipeline([
 # Este diccionario tiene un campo para indicar si es el conjunto
 # de entrenamiento o prueba. Por ejemplo:
 #
+
+# Cargo el modelo
+
+with open('files/models/model.pkl', 'rb') as f:
+    model = pickle.load(f)
+
+# Calculo las metricas
+from sklearn.metrics import precision_score, balanced_accuracy_score, recall_score, f1_score, confusion_matrix
+
+y_train_pred = model.predict(x_train)
+y_test_pred = model.predict(x_test)
+
+metrics_train = {
+    'type': 'metrics',
+    'dataset': 'train',
+    'precision': precision_score(y_train, y_train_pred),
+    'balanced_accuracy': balanced_accuracy_score(y_train, y_train_pred),
+    'recall': recall_score(y_train, y_train_pred),
+    'f1_score': f1_score(y_train, y_train_pred)
+}
+
+metrics_test = {
+    'type': 'metrics',
+    'dataset': 'test',
+    'precision': precision_score(y_test, y_test_pred),
+    'balanced_accuracy': balanced_accuracy_score(y_test, y_test_pred),
+    'recall': recall_score(y_test, y_test_pred),
+    'f1_score': f1_score(y_test, y_test_pred)
+}
+
+
 # {'dataset': 'train', 'precision': 0.8, 'balanced_accuracy': 0.7, 'recall': 0.9, 'f1_score': 0.85}
 # {'dataset': 'test', 'precision': 0.7, 'balanced_accuracy': 0.6, 'recall': 0.8, 'f1_score': 0.75}
 #
@@ -158,3 +237,24 @@ pipeline = Pipeline([
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+cm_train = confusion_matrix(y_train, y_train_pred)
+cm_test = confusion_matrix(y_test, y_test_pred)
+
+cm_matrix_train = {
+    'type': 'cm_matrix',
+    'dataset': 'train',
+    'true_0': {"predicted_0": cm_train[0, 0], "predicted_1": cm_train[0, 1]},
+    'true_1': {"predicted_0": cm_train[1, 0], "predicted_1": cm_train[1, 1]}
+}
+
+cm_matrix_test = {
+    'type': 'cm_matrix',
+    'dataset': 'test',
+    'true_0': {"predicted_0": cm_test[0, 0], "predicted_1": cm_test[0, 1]},
+    'true_1': {"predicted_0": cm_test[1, 0], "predicted_1": cm_test[1, 1]}
+}
+
+# Guardar las metricas
+metrics = [metrics_train, metrics_test, cm_matrix_train, cm_matrix_test]
+pd.DataFrame(metrics).to_json('files/output/metrics.json', orient='records', lines=True)
