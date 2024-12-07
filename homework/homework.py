@@ -178,7 +178,8 @@ model.fit(x_train, y_train)
 
 #
 # Paso 5.
-# Guarde el modelo como "files/models/model.pkl".
+# Guarde el modelo (comprimido con gzip) como "files/models/model.pkl.gz".
+# Recuerde que es posible guardar el modelo comprimido usanzo la libreria gzip.
 #
 
 with open('files/models/model.pkl', 'wb') as f:
